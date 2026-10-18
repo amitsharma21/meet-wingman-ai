@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meet Wingman</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <h1>Meet Wingman</h1>
+      </div>
+      <div class="header-right">
+        <button id="btn-open-settings" class="btn-icon" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Status Bar -->
+    <div id="status-banner" class="status-bar status-waiting">
+      <span class="status-dot"></span>
+      <span id="status-text" class="status-text">Checking Google Meet...</span>
+      <button id="btn-fix-captions" class="btn-sm btn-subtle" style="display: none;">Turn ON CC</button>
+    </div>
+
+    <!-- API Key Warning if not set -->
+    <div id="api-key-alert" class="alert-box" style="display: none;">
+      <span>Gemini API Key missing.</span>
+      <button id="btn-alert-setup" class="btn-sm">Add Key</button>
+    </div>
+
+    <!-- Section 1: Meeting Document & Notes (Upload before meeting or paste) -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-title">Reference Document & Notes</span>
+        <button id="btn-clear-context" class="btn-link">Clear</button>
+      </div>
+
+      <!-- File Drop & Upload Zone -->
+      <div id="drop-zone" class="drop-zone">
+        <input type="file" id="context-file-input" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv" style="display: none;">
+        
+        <div id="drop-zone-content" class="drop-zone-content">
+          <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="12" y1="18" x2="12" y2="12"></line>
+            <polyline points="9 15 12 12 15 15"></polyline>
+          </svg>
+          <div class="drop-text">
+            <span class="drop-main">Upload Document before meeting</span>
+            <span class="drop-sub">PDF, Word .docx, Markdown, Text (Click or drop)</span>
+          </div>
+        </div>
+
+        <!-- Loaded File Pill -->
+        <div id="loaded-file-bar" class="loaded-file-bar" style="display: none;">
+          <span class="file-icon">📄</span>
+          <span id="loaded-file-name" class="file-name">Document.pdf</span>
+          <span id="loaded-file-info" class="file-info">(~1,200 words)</span>
+          <button id="btn-remove-file" class="btn-remove-file" title="Remove Document">&times;</button>
+        </div>
+      </div>
+
+      <!-- Edit / View Text Notes -->
+      <div class="notes-toggle-row">
+        <button id="btn-toggle-notes" class="btn-link">
+          <span id="notes-toggle-text">+ Type or paste manual notes</span>
+        </button>
+      </div>
+
+      <textarea 
+        id="context-textarea" 
+        class="input-textarea" 
+        placeholder="Paste your meeting agenda, PRD, talking points, or project goals here..."
+        rows="3"
+        style="display: none;"></textarea>
+      
+      <div class="row-flex" style="margin-top: 4px;">
+        <div class="persona-row">
+          <label for="persona-select">Persona:</label>
+          <select id="persona-select" class="input-select-sm">
+            <option value="product-manager" selected>Product Manager</option>
+            <option value="tech-lead">Tech Lead / Architect</option>
+            <option value="engineering-manager">Engineering Manager</option>
+            <option value="sales-executive">Sales / Client Lead</option>
+            <option value="executive">Executive / VP</option>
+          </select>
+        </div>
+        <span id="context-words-badge" class="count-badge">0 words loaded</span>
+      </div>
+    </section>
+
+    <!-- Section 2: Questions Generator & Output -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-title">Strategic Questions</span>
+        <label class="autopilot-toggle" title="Automatically suggest questions as meeting progresses">
+          <input type="checkbox" id="toggle-autopilot">
+          <span>Auto-suggest</span>
+        </label>
+      </div>
+
+      <button id="btn-generate-questions" class="btn-primary">
+        <span id="generate-btn-text">Generate Questions</span>
+        <span id="generate-spinner" class="spinner" style="display: none;"></span>
+      </button>
+
+      <!-- Questions List -->
+      <div id="suggestions-list" class="suggestions-list">
+        <div class="empty-state" id="empty-suggestions">
+          Click <strong>Generate Questions</strong> to analyze dialogue against your notes.
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 3: Live Captions Feed -->
+    <section class="section section-transcript">
+      <div class="section-header">
+        <span class="section-title">Live Captions <span id="buffer-badge" class="count-badge">0 lines</span></span>
+        <div class="header-actions-group">
+          <button id="btn-export-transcript" class="btn-link" title="Export Markdown">Export</button>
+          <span class="divider">|</span>
+          <button id="btn-clear-transcript" class="btn-link">Clear</button>
+        </div>
+      </div>
+
+      <div id="transcript-feed" class="transcript-feed">
+        <div class="empty-state" id="empty-transcript">
+          Turn on Closed Captions (CC) in Google Meet to see live speech here.
+        </div>
+      </div>
+
+      <!-- Live Speaking Line -->
+      <div id="interim-bubble" class="interim-row" style="display: none;">
+        <span class="live-dot"></span>
+        <strong id="interim-speaker-name">Speaking...</strong>: 
+        <span id="interim-text"></span>
+      </div>
+    </section>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Settings</h3>
+          <button id="btn-close-settings" class="btn-icon">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="setting-api-key">Gemini API Key</label>
+            <input type="password" id="setting-api-key" class="input-text" placeholder="AIzaSy...">
+            <span class="form-hint">Stored securely in your local browser.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="setting-model">Model</label>
+            <select id="setting-model" class="input-select">
+              <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Fast & Sharp)</option>
+              <option value="gemini-3.8-pro">Gemini 3.8 Pro (Deep Reasoning)</option>
+              <option value="gemini-3-flash">Gemini 3 Flash</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              <option value="custom">Custom Model Name...</option>
+            </select>
+            <input type="text" id="setting-custom-model" class="input-text" placeholder="e.g. gemini-3.8-flash" style="display: none; margin-top: 6px;">
+          </div>
+
+          <div class="form-group">
+            <label for="setting-buffer-size">Captions Buffer</label>
+            <select id="setting-buffer-size" class="input-select">
+              <option value="15">Last 15 turns</option>
+              <option value="25" selected>Last 25 turns (Recommended)</option>
+              <option value="35">Last 35 turns</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="setting-custom-prompt">Extra Instructions (Optional)</label>
+            <textarea id="setting-custom-prompt" class="input-textarea" rows="2" placeholder="e.g. Focus on technical risks, architecture, and timeline estimates..."></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-test-api" class="btn-subtle">Test Connection</button>
+          <button id="btn-save-settings" class="btn-primary" style="width: auto; padding: 6px 14px;">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast" style="display: none;"></div>
+
+  </div>
+
+  <script src="lib/pdf.min.js"></script>
+  <script src="lib/mammoth.browser.min.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Distribution packages
+*.zip
+*.crx
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor folders
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Logs and temporary files
+*.log
+scratch/
+tmp/
