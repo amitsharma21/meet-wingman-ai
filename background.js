@@ -4,12 +4,28 @@
  */
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[Meet Wingman AI] Extension installed.");
+  console.log("[Meet Wingman AI] Extension installed/updated.");
   // Automatically open the side panel when the extension toolbar icon is clicked
   if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
     chrome.sidePanel
       .setPanelBehavior({ openPanelOnActionClick: true })
       .catch((error) => console.error("[Meet Wingman AI] Error setting panel behavior:", error));
+  }
+
+  // Inject content script into any already-opened Google Meet tabs
+  if (chrome.scripting && chrome.tabs) {
+    chrome.tabs.query({ url: "*://meet.google.com/*" }, (tabs) => {
+      if (tabs && tabs.length > 0) {
+        tabs.forEach((tab) => {
+          if (tab.id) {
+            chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ["content.js"],
+            }).catch(() => {});
+          }
+        });
+      }
+    });
   }
 });
 

@@ -67,37 +67,77 @@
    * Checks if user is inside an active Google Meet call
    */
   function isInCall() {
-    const isMeetingUrl = /meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(window.location.pathname);
-    const hasCallUI = !!(
-      document.querySelector("div[data-allocation-index]") ||
-      document.querySelector("div[data-meeting-code]") ||
-      document.querySelector("button[aria-label*='Leave' i]") ||
-      document.querySelector("button[aria-label*='End call' i]") ||
-      document.querySelector("div[jscontroller='kAPstf']")
+    const pathname = window.location.pathname.toLowerCase();
+    const href = window.location.href.toLowerCase();
+
+    // 1. Any Google Meet meeting code URL (e.g. /abc-defg-hij or meet.google.com/abc-defg-hij)
+    const hasMeetingCode =
+      /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(pathname) ||
+      /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(href) ||
+      pathname.includes("/call/") ||
+      pathname.includes("/_meet/");
+
+    if (!hasMeetingCode) {
+      return false;
+    }
+
+    // 2. Check if user is still in the green room / pre-join screen ("Ready to join?")
+    const joinBtn = document.querySelector(
+      "button[jsname='Qx7uuf'], button[aria-label*='Join' i], button[aria-label*='Ask to join' i]"
     );
-    return isMeetingUrl || hasCallUI;
+    const hasJoinButton = joinBtn && joinBtn.offsetParent !== null && !joinBtn.disabled;
+    const bodyText = document.body ? (document.body.innerText || "") : "";
+    const isReadyToJoin = bodyText.includes("Ready to join?") || bodyText.includes("Ask to join");
+
+    if (hasJoinButton && isReadyToJoin) {
+      return false; // Still in greenroom waiting to click Join
+    }
+
+    // 3. In-call indicators (call buttons, captions, mic/cam bar, or active meeting code URL)
+    return true;
   }
 
   /**
    * Finds the Google Meet closed captions button
    */
   function getCaptionsButton() {
-    return (
-      document.querySelector("button[jsname='r8qRAd']") ||
-      document.querySelector("button[aria-label*='caption' i]") ||
-      document.querySelector("button[data-tooltip*='caption' i]") ||
-      document.querySelector("button[aria-label*='sous-titres' i]") ||
-      document.querySelector("button[aria-label*='subtítulos' i]")
+    // 1. Query common known button selectors & attributes
+    const btn = document.querySelector(
+      "button[jsname='r8qRAd'], button[aria-label*='caption' i], button[data-tooltip*='caption' i], button[aria-label*='sous-titre' i], button[aria-label*='subtítulo' i], button[aria-label*='untertitel' i]"
     );
+    if (btn) return btn;
+
+    // 2. Search all buttons for CC text or caption labels
+    const allButtons = document.querySelectorAll("button");
+    for (const b of allButtons) {
+      const label = (b.getAttribute("aria-label") || b.getAttribute("data-tooltip") || "").toLowerCase();
+      if (label.includes("caption") || label.includes("closed caption") || label.includes("sous-titre") || label.includes("subtítulo")) {
+        return b;
+      }
+      if ((b.innerText || "").trim().toLowerCase() === "cc") {
+        return b;
+      }
+    }
+    return null;
   }
 
   /**
    * Checks if closed captions are currently enabled in Google Meet
    */
   function areCaptionsEnabled() {
+    // 1. Check if any active caption elements or containers exist with text
+    const activeCaption = document.querySelector(
+      ".ygicle.VbkSUe, .VbkSUe, .iTTPOb, span.ygZ0De, span.jT30ne, span.CNusmb, [role='region'][aria-label*='caption' i], [role='region'][aria-label*='subtitle' i]"
+    );
+    if (activeCaption && activeCaption.offsetParent !== null) {
+      return true;
+    }
+
+    // 2. Check caption toggle button state
     const btn = getCaptionsButton();
     if (btn) {
       const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
+      const tooltip = (btn.getAttribute("data-tooltip") || "").toLowerCase();
       const ariaPressed = btn.getAttribute("aria-pressed");
       const dataIsActive = btn.getAttribute("data-is-active");
 
@@ -105,18 +145,11 @@
       if (
         ariaLabel.includes("turn off") ||
         ariaLabel.includes("desactivar") ||
-        ariaLabel.includes("désactiver")
+        ariaLabel.includes("désactiver") ||
+        tooltip.includes("turn off")
       ) {
         return true;
       }
-    }
-
-    // Also check if any caption container is visible in DOM
-    const container = document.querySelector(
-      '[role="region"][aria-label*="caption" i], [role="region"][aria-label*="subtitle" i], [jsname="dsyhDe"], div[jsname="YS77vf"], .VbkSUe'
-    );
-    if (container && container.offsetParent !== null) {
-      return true;
     }
 
     return false;

@@ -340,6 +340,9 @@
   function handleCaptionTurn(turn) {
     if (!turn || !turn.text) return;
 
+    // We are actively receiving captions from Meet! Ensure status reflects connected
+    updateMeetStatus({ inCall: true, captionsEnabled: true });
+
     if (!turn.isFinal) {
       interimSpeakerName.textContent = turn.speaker || "Speaking...";
       interimText.textContent = turn.text;
@@ -387,13 +390,36 @@
     }
   }
 
+  // Helper to find Google Meet tab across active window or any open window
+  function findMeetTab(callback) {
+    // 1. Check if active tab in current window is Meet
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const activeTab = activeTabs && activeTabs[0];
+      if (activeTab && activeTab.url && activeTab.url.includes("meet.google.com")) {
+        callback(activeTab);
+        return;
+      }
+
+      // 2. Search all open Google Meet tabs across any window
+      chrome.tabs.query({ url: "*://meet.google.com/*" }, (meetTabs) => {
+        if (meetTabs && meetTabs.length > 0) {
+          // Prefer one with an active meeting code (e.g. abc-defg-hij)
+          const inCallTab = meetTabs.find((t) => t.url && /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(t.url)) || meetTabs[0];
+          callback(inCallTab);
+        } else {
+          callback(null);
+        }
+      });
+    });
+  }
+
   // Update Status Banner UI
   function updateMeetStatus(data) {
     if (!data) return;
 
     if (!data.inCall) {
       statusBanner.className = "status-bar status-waiting";
-      statusText.textContent = "Google Meet not active";
+      statusText.textContent = "Google Meet not active (Click to refresh)";
       btnFixCaptions.style.display = "none";
     } else if (!data.captionsEnabled) {
       statusBanner.className = "status-bar status-captions-off";
@@ -408,9 +434,8 @@
 
   // Prompt Google Meet to toggle captions
   async function toggleMeetCaptions() {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id && tab.url && tab.url.includes("meet.google.com")) {
+    findMeetTab((tab) => {
+      if (tab && tab.id) {
         chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_MEET_CAPTIONS" }, (response) => {
           if (chrome.runtime.lastError) return;
           if (response && response.captionsEnabled) {
@@ -421,20 +446,17 @@
       } else {
         showToast("Open Google Meet call first");
       }
-    } catch (e) {
-      console.warn(e);
-    }
+    });
   }
 
   // Insert question directly into Google Meet's chat
   async function insertIntoMeetChat(questionText) {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id && tab.url && tab.url.includes("meet.google.com")) {
+    findMeetTab((tab) => {
+      if (tab && tab.id) {
         chrome.tabs.sendMessage(tab.id, { type: "INSERT_MEET_CHAT", text: questionText }, (res) => {
           if (chrome.runtime.lastError || !res || !res.success) {
             navigator.clipboard.writeText(questionText);
-            showToast("Copied to clipboard");
+            showToast("Copied to clipboard (Open Meet chat to paste)");
             return;
           }
           showToast("Sent to Meet chat");
@@ -443,10 +465,7 @@
         navigator.clipboard.writeText(questionText);
         showToast("Copied to clipboard");
       }
-    } catch (e) {
-      navigator.clipboard.writeText(questionText);
-      showToast("Copied to clipboard");
-    }
+    });
   }
 
   /**
@@ -859,7 +878,15 @@ ${dialogueText}`;
       }
     });
 
-    btnFixCaptions.addEventListener("click", toggleMeetCaptions);
+    btnFixCaptions.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMeetCaptions();
+    });
+
+    statusBanner.addEventListener("click", () => {
+      showToast("Checking Google Meet status...");
+      checkCurrentTabStatus();
+    });
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "CAPTION_TURN") {
@@ -870,35 +897,56 @@ ${dialogueText}`;
     });
 
     function checkCurrentTabStatus() {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (chrome.runtime.lastError) return;
-        const activeTab = tabs && tabs[0];
-        if (activeTab && activeTab.id && activeTab.url && activeTab.url.includes("meet.google.com")) {
-          chrome.tabs.sendMessage(activeTab.id, { type: "GET_MEET_STATUS" }, (response) => {
-            if (chrome.runtime.lastError) {
-              updateMeetStatus({ inCall: false, captionsEnabled: false });
-              return;
-            }
-            if (response) {
-              updateMeetStatus(response);
+      findMeetTab((tab) => {
+        if (!tab || !tab.id) {
+          updateMeetStatus({ inCall: false, captionsEnabled: false });
+          return;
+        }
+
+        chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (response) => {
+          if (chrome.runtime.lastError || !response) {
+            // Content script was not active on this tab (e.g. page was loaded before extension reload)
+            // Programmatically inject content.js!
+            if (chrome.scripting) {
+              chrome.scripting.executeScript(
+                {
+                  target: { tabId: tab.id },
+                  files: ["content.js"],
+                },
+                () => {
+                  setTimeout(() => {
+                    chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (res2) => {
+                      if (res2) {
+                        updateMeetStatus(res2);
+                      } else {
+                        updateMeetStatus({ inCall: false, captionsEnabled: false });
+                      }
+                    });
+                  }, 350);
+                }
+              );
             } else {
               updateMeetStatus({ inCall: false, captionsEnabled: false });
             }
-          });
-        } else {
-          updateMeetStatus({ inCall: false, captionsEnabled: false });
-        }
+            return;
+          }
+
+          updateMeetStatus(response);
+        });
       });
     }
 
     checkCurrentTabStatus();
+
+    // Periodic check every 3 seconds so status updates as soon as call begins
+    setInterval(checkCurrentTabStatus, 3000);
 
     if (chrome.tabs && chrome.tabs.onActivated) {
       chrome.tabs.onActivated.addListener(checkCurrentTabStatus);
     }
     if (chrome.tabs && chrome.tabs.onUpdated) {
       chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-        if (changeInfo.status === "complete" && tab.active) {
+        if (changeInfo.status === "complete") {
           checkCurrentTabStatus();
         }
       });
