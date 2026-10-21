@@ -18,7 +18,11 @@
     isFinal: false,
   };
 
+  let lastFinalizedPrefix = "";
+  let activeTurnStartTime = 0;
   const FINALIZE_DELAY_MS = 1500;
+  const MAX_CONTINUOUS_SPEECH_MS = 10000; // 10s continuous speech before sentence chunking
+  const MIN_SENTENCE_CHUNK_LEN = 90; // ~15 words minimum before sentence boundary split
 
   // System notification phrases to ignore
   const SYSTEM_ANNOUNCEMENTS = [
@@ -209,11 +213,13 @@
         lastSeen: Date.now(),
         isFinal: true,
       };
+      activeTurnStartTime = 0;
     }
   }
 
   /**
-   * Processes new incoming speaker and text, debouncing and detecting speaker changes
+   * Processes new incoming speaker and text, debouncing, detecting speaker changes,
+   * and chunking long continuous speeches into natural sentence turns.
    */
   function processExtractedText(speaker, text) {
     const cleanSpeaker = speaker.trim() || "You";
@@ -227,20 +233,65 @@
     if (!cleanText || cleanText.length < 2) return;
     if (isSystemAnnouncement(cleanText)) return;
 
-    // Skip if unchanged
-    if (currentTurn.speaker === cleanSpeaker && currentTurn.text === cleanText) {
-      return;
-    }
-
     // If speaker changed and we had an active utterance from previous speaker, finalize it
     if (currentTurn.speaker && currentTurn.speaker !== cleanSpeaker && currentTurn.text) {
       finalizeCurrentTurn();
+      lastFinalizedPrefix = "";
+      activeTurnStartTime = 0;
+    }
+
+    // If Google Meet keeps previously finalized text inside the same element, strip what was already finalized
+    if (lastFinalizedPrefix && cleanText.startsWith(lastFinalizedPrefix)) {
+      cleanText = cleanText.slice(lastFinalizedPrefix.length).trim();
+      if (!cleanText || cleanText.length < 2) return;
+    } else if (lastFinalizedPrefix && !cleanText.includes(lastFinalizedPrefix)) {
+      // DOM node reset or scrolled past old prefix
+      lastFinalizedPrefix = "";
+    }
+
+    // Skip if unchanged
+    if (currentTurn.speaker === cleanSpeaker && currentTurn.text === cleanText) {
+      return;
     }
 
     currentTurn.speaker = cleanSpeaker;
     currentTurn.text = cleanText;
     currentTurn.lastSeen = Date.now();
     currentTurn.isFinal = false;
+    if (!activeTurnStartTime) activeTurnStartTime = Date.now();
+
+    // Handle large, continuous speech:
+    // If text exceeds MIN_SENTENCE_CHUNK_LEN (90 chars) and contains a sentence ending (. ? ! \n),
+    // or if the person has spoken continuously for > 10 seconds:
+    const speechDuration = Date.now() - activeTurnStartTime;
+    const sentenceSplitMatch = cleanText.match(/^([\s\S]*?[.!?\n]+)\s+([A-Z0-9].*)$/);
+
+    if (
+      (cleanText.length >= MIN_SENTENCE_CHUNK_LEN && sentenceSplitMatch) ||
+      (speechDuration > MAX_CONTINUOUS_SPEECH_MS && sentenceSplitMatch)
+    ) {
+      const completedSentence = sentenceSplitMatch[1].trim();
+      const remainingSpeech = sentenceSplitMatch[2].trim();
+
+      if (completedSentence.length >= 15) {
+        // Finalize the completed sentence chunk into the transcript feed
+        currentTurn.text = completedSentence;
+        finalizeCurrentTurn();
+
+        // Update prefix tracker so mutations don't duplicate the completed sentence
+        lastFinalizedPrefix = lastFinalizedPrefix
+          ? `${lastFinalizedPrefix} ${completedSentence}`.trim()
+          : completedSentence;
+
+        // Start the remaining speech as the active interim turn
+        currentTurn.speaker = cleanSpeaker;
+        currentTurn.text = remainingSpeech;
+        currentTurn.lastSeen = Date.now();
+        currentTurn.isFinal = false;
+        activeTurnStartTime = Date.now();
+        cleanText = remainingSpeech;
+      }
+    }
 
     // Emit live interim update
     sendRuntimeMessage({
@@ -258,6 +309,8 @@
     }
     finalizeTimer = setTimeout(() => {
       finalizeCurrentTurn();
+      lastFinalizedPrefix = "";
+      activeTurnStartTime = 0;
     }, FINALIZE_DELAY_MS);
   }
 

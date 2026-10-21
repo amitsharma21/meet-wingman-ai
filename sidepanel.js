@@ -336,6 +336,23 @@
     chrome.storage.local.set({ savedTranscript: transcript });
   }
 
+  // Helper to remove repeated boundary words when the same speaker continues talking
+  function removeWordOverlap(prevText, nextText) {
+    if (!prevText || !nextText) return nextText;
+    const prevWords = prevText.trim().split(/\s+/);
+    const nextWords = nextText.trim().split(/\s+/);
+    const maxLen = Math.min(prevWords.length, nextWords.length, 4);
+
+    for (let len = maxLen; len >= 1; len--) {
+      const prevTail = prevWords.slice(-len).join(" ").toLowerCase().replace(/[.,!?;:]/g, "");
+      const nextHead = nextWords.slice(0, len).join(" ").toLowerCase().replace(/[.,!?;:]/g, "");
+      if (prevTail && prevTail === nextHead) {
+        return nextWords.slice(len).join(" ");
+      }
+    }
+    return nextText;
+  }
+
   // Handle incoming caption turn from content.js
   function handleCaptionTurn(turn) {
     if (!turn || !turn.text) return;
@@ -346,9 +363,11 @@
     if (!turn.isFinal) {
       interimSpeakerName.textContent = turn.speaker || "Speaking...";
       interimText.textContent = turn.text;
-      interimBubble.style.display = "block";
+      interimBubble.style.display = "flex";
+      interimBubble.scrollTop = interimBubble.scrollHeight;
     } else {
       interimBubble.style.display = "none";
+      interimText.textContent = "";
 
       const last = transcript[transcript.length - 1];
       if (last && last.speaker.toLowerCase() === turn.speaker.toLowerCase()) {
@@ -371,6 +390,12 @@
         // If last turn already has this text -> skip
         if (lastLower.startsWith(turnLower)) {
           return;
+        }
+
+        // Clean any minor overlapping transition words
+        const trimmed = removeWordOverlap(last.text, turn.text);
+        if (trimmed && trimmed.length > 0) {
+          turn.text = trimmed;
         }
       }
 

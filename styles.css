@@ -503,15 +503,16 @@ body {
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 200px;
-  min-height: 100px;
+  gap: 7px;
+  max-height: 250px;
+  min-height: 110px;
   overflow-y: auto;
+  scroll-behavior: smooth;
 }
 
 .t-item {
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   word-break: break-word;
 }
 
@@ -528,14 +529,20 @@ body {
 
 .interim-row {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
+  align-items: flex-start;
+  gap: 6px;
   font-size: 11px;
   color: #e4e4e7;
-  padding: 4px 8px;
+  padding: 6px 9px;
   background: var(--bg-card);
+  border: 1px solid rgba(59, 130, 246, 0.25);
   border-radius: 4px;
-  font-style: italic;
+  font-style: normal;
+  max-height: 85px;
+  overflow-y: auto;
+  word-break: break-word;
+  line-height: 1.4;
+  scroll-behavior: smooth;
 }
 
 .live-dot {
@@ -543,6 +550,9 @@ body {
   height: 6px;
   border-radius: 50%;
   background: #3b82f6;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
   display: inline-block;
 }
 
