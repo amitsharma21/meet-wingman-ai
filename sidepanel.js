@@ -505,9 +505,19 @@
       const referenceNotes = notesText || "No written agenda provided. Focus on steering spoken discussion effectively.";
 
       const recentTurns = transcript.slice(-config.bufferSize);
-      const dialogueText = recentTurns.length > 0
-        ? recentTurns.map(t => `${t.speaker}: ${t.text}`).join("\n")
-        : "(No live captions captured yet. Provide kickoff questions based on the notes).";
+      let dialogueText = recentTurns.length > 0
+        ? recentTurns.map((t) => `${t.speaker}: ${t.text}`).join("\n")
+        : "";
+
+      // Include active speech in progress if someone is talking right now
+      if (interimBubble && interimBubble.style.display !== "none" && interimText.textContent.trim()) {
+        const speakingNow = `${interimSpeakerName.textContent.trim() || "Speaking"}: ${interimText.textContent.trim()} [in progress]`;
+        dialogueText = dialogueText ? `${dialogueText}\n${speakingNow}` : speakingNow;
+      }
+
+      if (!dialogueText) {
+        dialogueText = "(No live captions captured yet. Provide kickoff questions based on the notes).";
+      }
 
       const systemInstruction = `You are a real-time conversational wingman in a live meeting.
 Your Role: ${personaDesc}
@@ -520,7 +530,7 @@ Generate exactly 3 sharp, natural questions the user can immediately ask out lou
 2. Category "gap": Points out an unaddressed requirement, contradiction, or risk between the notes and what was said.
 3. Category "deepen": A clarifying question that forces concrete technical depth or execution clarity.
 
-Respond ONLY with valid JSON in this structure:
+Respond ONLY with valid JSON in this exact structure:
 {
   "questions": [
     {
@@ -567,7 +577,7 @@ ${dialogueText}`;
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.35,
-          maxOutputTokens: 1024,
+          maxOutputTokens: 4096,
         }
       };
 
@@ -586,12 +596,14 @@ ${dialogueText}`;
       const rawText = responseData.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!rawText) throw new Error("Empty response from model");
 
-      let parsed = parseJsonSafely(rawText);
-      if (!parsed || !Array.isArray(parsed.questions) || parsed.questions.length === 0) {
+      console.log("[Meet Wingman AI] Gemini raw output:", rawText);
+
+      const questions = extractQuestionsSafely(rawText);
+      if (!questions || questions.length === 0) {
         throw new Error("Could not parse question JSON");
       }
 
-      renderSuggestions(parsed.questions);
+      renderSuggestions(questions);
       turnsSinceLastGen = 0;
       showToast("3 questions ready");
     } catch (err) {
@@ -605,20 +617,167 @@ ${dialogueText}`;
     }
   }
 
-  // Safe JSON extraction from LLM response
-  function parseJsonSafely(text) {
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      const clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-      try {
-        return JSON.parse(clean);
-      } catch (e2) {
-        const match = clean.match(/\{[\s\S]*\}/);
-        if (match) return JSON.parse(match[0]);
+  // Attempt to repair truncated JSON (unclosed quotes, braces, brackets)
+  function tryRepairJson(str) {
+    if (!str) return null;
+    let s = str.trim();
+
+    let inString = false;
+    let openBraces = 0;
+    let openBrackets = 0;
+
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) {
+        inString = !inString;
+      } else if (!inString) {
+        if (ch === '{') openBraces++;
+        else if (ch === '}') openBraces--;
+        else if (ch === '[') openBrackets++;
+        else if (ch === ']') openBrackets--;
       }
     }
-    return null;
+
+    if (inString) s += '"';
+    s = s.replace(/,\s*$/, "").replace(/:\s*$/, ':""');
+    while (openBraces > 0) {
+      s += "}";
+      openBraces--;
+    }
+    while (openBrackets > 0) {
+      s += "]";
+      openBrackets--;
+    }
+
+    try {
+      return JSON.parse(s);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Fallback regex extractor for questions in unstructured or cut-off responses
+  function extractQuestionsRegex(text) {
+    const list = [];
+    if (!text) return list;
+
+    const qMatches = [...text.matchAll(/"question"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
+    const tMatches = [...text.matchAll(/"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
+    const cMatches = [...text.matchAll(/"category"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
+    const rMatches = [...text.matchAll(/"rationale"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
+
+    const defaultCats = ["steer", "gap", "deepen"];
+
+    for (let i = 0; i < qMatches.length; i++) {
+      const qText = qMatches[i][1].replace(/\\"/g, '"');
+      const title = tMatches[i] ? tMatches[i][1].replace(/\\"/g, '"') : `Question ${i + 1}`;
+      const cat = cMatches[i] ? cMatches[i][1].toLowerCase() : defaultCats[i % 3];
+      const rationale = rMatches[i] ? rMatches[i][1].replace(/\\"/g, '"') : "Targets key conversation points.";
+
+      list.push({
+        category: cat,
+        title: title,
+        question: qText,
+        rationale: rationale,
+      });
+    }
+
+    return list;
+  }
+
+  // Resilient, multi-pass extractor for LLM question response
+  function extractQuestionsSafely(rawText) {
+    if (!rawText || typeof rawText !== "string") return null;
+
+    let parsed = null;
+
+    // 1. Direct JSON parse
+    try {
+      parsed = JSON.parse(rawText.trim());
+    } catch (e1) {
+      // 2. Strip markdown fences
+      const clean = rawText
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+      try {
+        parsed = JSON.parse(clean);
+      } catch (e2) {
+        // 3. Extract JSON object substring
+        const objMatch = clean.match(/\{[\s\S]*\}/);
+        if (objMatch) {
+          try {
+            parsed = JSON.parse(objMatch[0]);
+          } catch (e3) {
+            parsed = tryRepairJson(objMatch[0]);
+          }
+        }
+
+        // 4. Extract JSON array substring if model returned [...] directly
+        if (!parsed) {
+          const arrMatch = clean.match(/\[[\s\S]*\]/);
+          if (arrMatch) {
+            try {
+              parsed = JSON.parse(arrMatch[0]);
+            } catch (e4) {
+              parsed = tryRepairJson(arrMatch[0]);
+            }
+          }
+        }
+      }
+    }
+
+    // Normalize parsed structure to a flat array of questions
+    let list = null;
+    if (Array.isArray(parsed)) {
+      list = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      if (Array.isArray(parsed.questions)) {
+        list = parsed.questions;
+      } else if (Array.isArray(parsed.suggestions)) {
+        list = parsed.suggestions;
+      } else if (Array.isArray(parsed.items)) {
+        list = parsed.items;
+      } else if (Array.isArray(parsed.data)) {
+        list = parsed.data;
+      } else {
+        const vals = Object.values(parsed);
+        if (vals.length > 0 && typeof vals[0] === "object" && (vals[0].question || vals[0].title)) {
+          list = vals;
+        }
+      }
+    }
+
+    // 5. Fallback: If structured parsing failed, extract via Regex
+    if (!list || list.length === 0) {
+      list = extractQuestionsRegex(rawText);
+    }
+
+    if (!Array.isArray(list) || list.length === 0) {
+      return null;
+    }
+
+    // Validate and clean each question item
+    const validQuestions = list
+      .filter((q) => q && (q.question || q.text || q.title))
+      .map((q, idx) => {
+        const defaultCats = ["steer", "gap", "deepen"];
+        let cat = (q.category || defaultCats[idx % 3]).toLowerCase().trim();
+        if (!["steer", "gap", "deepen"].includes(cat)) {
+          if (cat.includes("steer") || cat.includes("goal") || cat.includes("re-anchor")) cat = "steer";
+          else if (cat.includes("gap") || cat.includes("blind") || cat.includes("risk")) cat = "gap";
+          else cat = "deepen";
+        }
+
+        return {
+          category: cat,
+          title: q.title || `Strategic Point ${idx + 1}`,
+          question: q.question || q.text || q.title || "",
+          rationale: q.rationale || q.reason || "Directly relevant to current live discussion.",
+        };
+      });
+
+    return validQuestions.length > 0 ? validQuestions.slice(0, 3) : null;
   }
 
   // Render suggestion boxes
