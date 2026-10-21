@@ -415,22 +415,34 @@
     }
   }
 
-  // Helper to find Google Meet tab across active window or any open window
+  // Meeting URL detector across Google Meet, Microsoft Teams, and Zoom
+  function isMeetingUrl(url) {
+    if (!url) return false;
+    const u = url.toLowerCase();
+    return (
+      u.includes("meet.google.com") ||
+      u.includes("teams.microsoft.com") ||
+      u.includes("teams.live.com") ||
+      u.includes("zoom.us")
+    );
+  }
+
+  // Helper to find active call tab across Google Meet, Teams, or Zoom in any window
   function findMeetTab(callback) {
-    // 1. Check if active tab in current window is Meet
+    // 1. Check if active tab in current window is a meeting
     chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
       const activeTab = activeTabs && activeTabs[0];
-      if (activeTab && activeTab.url && activeTab.url.includes("meet.google.com")) {
+      if (activeTab && activeTab.url && isMeetingUrl(activeTab.url)) {
         callback(activeTab);
         return;
       }
 
-      // 2. Search all open Google Meet tabs across any window
-      chrome.tabs.query({ url: "*://meet.google.com/*" }, (meetTabs) => {
-        if (meetTabs && meetTabs.length > 0) {
-          // Prefer one with an active meeting code (e.g. abc-defg-hij)
-          const inCallTab = meetTabs.find((t) => t.url && /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(t.url)) || meetTabs[0];
-          callback(inCallTab);
+      // 2. Search all open tabs across all windows for Meet, Teams, or Zoom
+      chrome.tabs.query({}, (allTabs) => {
+        const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
+        if (callTabs.length > 0) {
+          const activeCallTab = callTabs.find((t) => t.active) || callTabs[0];
+          callback(activeCallTab);
         } else {
           callback(null);
         }
@@ -442,49 +454,56 @@
   function updateMeetStatus(data) {
     if (!data) return;
 
+    let pName = "Google Meet";
+    if (data.platform === "teams" || (data.url && data.url.includes("teams"))) {
+      pName = "Microsoft Teams";
+    } else if (data.platform === "zoom" || (data.url && data.url.includes("zoom"))) {
+      pName = "Zoom";
+    }
+
     if (!data.inCall) {
       statusBanner.className = "status-bar status-waiting";
-      statusText.textContent = "Google Meet not active (Click to refresh)";
+      statusText.textContent = `Call not active (${pName} / Click to refresh)`;
       btnFixCaptions.style.display = "none";
     } else if (!data.captionsEnabled) {
       statusBanner.className = "status-bar status-captions-off";
-      statusText.textContent = "Captions are OFF in Meet";
+      statusText.textContent = `Captions are OFF in ${pName}`;
       btnFixCaptions.style.display = "inline-block";
     } else {
       statusBanner.className = "status-bar status-connected";
-      statusText.textContent = "Listening to Meet captions";
+      statusText.textContent = `Listening to ${pName} captions`;
       btnFixCaptions.style.display = "none";
     }
   }
 
-  // Prompt Google Meet to toggle captions
+  // Prompt meeting to toggle captions
   async function toggleMeetCaptions() {
     findMeetTab((tab) => {
       if (tab && tab.id) {
         chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_MEET_CAPTIONS" }, (response) => {
           if (chrome.runtime.lastError) return;
           if (response && response.captionsEnabled) {
-            updateMeetStatus({ inCall: true, captionsEnabled: true });
+            updateMeetStatus({ inCall: true, captionsEnabled: true, platform: response.platform });
             showToast("Captions turned ON");
           }
         });
       } else {
-        showToast("Open Google Meet call first");
+        showToast("Open your meeting call first (Meet, Teams, Zoom)");
       }
     });
   }
 
-  // Insert question directly into Google Meet's chat
+  // Insert question directly into in-call chat
   async function insertIntoMeetChat(questionText) {
     findMeetTab((tab) => {
       if (tab && tab.id) {
         chrome.tabs.sendMessage(tab.id, { type: "INSERT_MEET_CHAT", text: questionText }, (res) => {
           if (chrome.runtime.lastError || !res || !res.success) {
             navigator.clipboard.writeText(questionText);
-            showToast("Copied to clipboard (Open Meet chat to paste)");
+            showToast("Copied to clipboard (Paste in chat)");
             return;
           }
-          showToast("Sent to Meet chat");
+          showToast("Pasted into meeting chat!");
         });
       } else {
         navigator.clipboard.writeText(questionText);
@@ -1126,14 +1145,14 @@ ${dialogueText}`;
                       if (res2) {
                         updateMeetStatus(res2);
                       } else {
-                        updateMeetStatus({ inCall: false, captionsEnabled: false });
+                        updateMeetStatus({ inCall: false, captionsEnabled: false, url: tab.url });
                       }
                     });
                   }, 350);
                 }
               );
             } else {
-              updateMeetStatus({ inCall: false, captionsEnabled: false });
+              updateMeetStatus({ inCall: false, captionsEnabled: false, url: tab.url });
             }
             return;
           }

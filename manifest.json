@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Meet Wingman AI - Real-Time Meeting Assistant",
   "version": "1.0.0",
-  "description": "Real-time AI assistant for Google Meet. Compares live captions against reference documents and suggests high-impact questions.",
+  "description": "Real-time AI assistant for Google Meet, Teams & Zoom. Compares live captions with notes and suggests strategic questions.",
   "permissions": [
     "sidePanel",
     "storage",
@@ -11,7 +11,10 @@
     "scripting"
   ],
   "host_permissions": [
-    "*://meet.google.com/*"
+    "*://meet.google.com/*",
+    "*://teams.microsoft.com/*",
+    "*://teams.live.com/*",
+    "*://*.zoom.us/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -35,7 +38,10 @@
   "content_scripts": [
     {
       "matches": [
-        "*://meet.google.com/*"
+        "*://meet.google.com/*",
+        "*://teams.microsoft.com/*",
+        "*://teams.live.com/*",
+        "*://*.zoom.us/*"
       ],
       "js": [
         "content.js"

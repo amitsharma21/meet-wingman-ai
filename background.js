@@ -12,19 +12,30 @@ chrome.runtime.onInstalled.addListener(() => {
       .catch((error) => console.error("[Meet Wingman AI] Error setting panel behavior:", error));
   }
 
-  // Inject content script into any already-opened Google Meet tabs
+  // Inject content script into any already-opened Meet, Teams, or Zoom tabs
   if (chrome.scripting && chrome.tabs) {
-    chrome.tabs.query({ url: "*://meet.google.com/*" }, (tabs) => {
-      if (tabs && tabs.length > 0) {
-        tabs.forEach((tab) => {
-          if (tab.id) {
-            chrome.scripting.executeScript({
-              target: { tabId: tab.id },
-              files: ["content.js"],
-            }).catch(() => {});
-          }
-        });
-      }
+    const meetingPatterns = [
+      "*://meet.google.com/*",
+      "*://teams.microsoft.com/*",
+      "*://teams.live.com/*",
+      "*://*.zoom.us/*",
+    ];
+
+    meetingPatterns.forEach((pattern) => {
+      chrome.tabs.query({ url: pattern }, (tabs) => {
+        if (tabs && tabs.length > 0) {
+          tabs.forEach((tab) => {
+            if (tab.id) {
+              chrome.scripting
+                .executeScript({
+                  target: { tabId: tab.id },
+                  files: ["content.js"],
+                })
+                .catch(() => {});
+            }
+          });
+        }
+      });
     });
   }
 });

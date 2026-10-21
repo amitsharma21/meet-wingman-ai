@@ -68,13 +68,55 @@
   }
 
   /**
-   * Checks if user is inside an active Google Meet call
+   * Detect current meeting platform (Google Meet, Microsoft Teams, or Zoom)
+   */
+  function detectPlatform() {
+    const host = window.location.hostname.toLowerCase();
+    if (host.includes("teams.microsoft.com") || host.includes("teams.live.com")) {
+      return "teams";
+    }
+    if (host.includes("zoom.us")) {
+      return "zoom";
+    }
+    return "meet";
+  }
+
+  const PLATFORM = detectPlatform();
+
+  /**
+   * Checks if user is inside an active meeting call (Meet, Teams, Zoom)
    */
   function isInCall() {
     const pathname = window.location.pathname.toLowerCase();
     const href = window.location.href.toLowerCase();
 
-    // 1. Any Google Meet meeting code URL (e.g. /abc-defg-hij or meet.google.com/abc-defg-hij)
+    if (PLATFORM === "teams") {
+      const hasTeamsCallUI = !!(
+        document.querySelector("button[id*='hangup' i]") ||
+        document.querySelector("button[aria-label*='leave' i]") ||
+        document.querySelector("button[aria-label*='hang up' i]") ||
+        document.querySelector("div[data-tid='call-control-bar']") ||
+        document.querySelector("div[data-tid='closed-captions-renderer']") ||
+        document.querySelector("button[id*='microphone-button']") ||
+        document.querySelector("div[id*='calling-container']") ||
+        document.querySelector(".calling-call-screen")
+      );
+      return hasTeamsCallUI || pathname.includes("calling") || pathname.includes("meetup-join");
+    }
+
+    if (PLATFORM === "zoom") {
+      const hasZoomCallUI = !!(
+        document.querySelector("button.footer__leave-btn") ||
+        document.querySelector("button[aria-label*='leave' i]") ||
+        document.querySelector("button[aria-label*='end' i]") ||
+        document.querySelector(".meeting-app") ||
+        document.querySelector(".closed-caption-container") ||
+        document.querySelector("button[aria-label*='mute' i]")
+      );
+      return hasZoomCallUI || pathname.includes("/wc/") || pathname.includes("/j/");
+    }
+
+    // Google Meet
     const hasMeetingCode =
       /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(pathname) ||
       /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(href) ||
@@ -85,7 +127,6 @@
       return false;
     }
 
-    // 2. Check if user is still in the green room / pre-join screen ("Ready to join?")
     const joinBtn = document.querySelector(
       "button[jsname='Qx7uuf'], button[aria-label*='Join' i], button[aria-label*='Ask to join' i]"
     );
@@ -94,24 +135,21 @@
     const isReadyToJoin = bodyText.includes("Ready to join?") || bodyText.includes("Ask to join");
 
     if (hasJoinButton && isReadyToJoin) {
-      return false; // Still in greenroom waiting to click Join
+      return false;
     }
 
-    // 3. In-call indicators (call buttons, captions, mic/cam bar, or active meeting code URL)
     return true;
   }
 
   /**
-   * Finds the Google Meet closed captions button
+   * Finds the closed captions button across Google Meet, Teams, or Zoom
    */
   function getCaptionsButton() {
-    // 1. Query common known button selectors & attributes
     const btn = document.querySelector(
-      "button[jsname='r8qRAd'], button[aria-label*='caption' i], button[data-tooltip*='caption' i], button[aria-label*='sous-titre' i], button[aria-label*='subtítulo' i], button[aria-label*='untertitel' i]"
+      "button[jsname='r8qRAd'], button[id*='closed-captions' i], button[data-tid*='closed-captions' i], button.closed-caption-button, button[aria-label*='caption' i], button[data-tooltip*='caption' i], button[aria-label*='sous-titre' i], button[aria-label*='subtítulo' i], button[aria-label*='untertitel' i]"
     );
     if (btn) return btn;
 
-    // 2. Search all buttons for CC text or caption labels
     const allButtons = document.querySelectorAll("button");
     for (const b of allButtons) {
       const label = (b.getAttribute("aria-label") || b.getAttribute("data-tooltip") || "").toLowerCase();
@@ -126,18 +164,16 @@
   }
 
   /**
-   * Checks if closed captions are currently enabled in Google Meet
+   * Checks if closed captions are currently enabled
    */
   function areCaptionsEnabled() {
-    // 1. Check if any active caption elements or containers exist with text
     const activeCaption = document.querySelector(
-      ".ygicle.VbkSUe, .VbkSUe, .iTTPOb, span.ygZ0De, span.jT30ne, span.CNusmb, [role='region'][aria-label*='caption' i], [role='region'][aria-label*='subtitle' i]"
+      ".ygicle.VbkSUe, .VbkSUe, .iTTPOb, span.ygZ0De, span.jT30ne, span.CNusmb, [role='region'][aria-label*='caption' i], [role='region'][aria-label*='subtitle' i], div[data-tid='closed-caption-text'], span[data-tid='closed-caption-text'], div[data-tid='closed-captions-renderer'], div.closed-caption-container, span.closed-caption-item, div.closed-caption-item"
     );
     if (activeCaption && activeCaption.offsetParent !== null) {
       return true;
     }
 
-    // 2. Check caption toggle button state
     const btn = getCaptionsButton();
     if (btn) {
       const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
@@ -160,7 +196,7 @@
   }
 
   /**
-   * Toggles Google Meet captions on or off
+   * Toggles captions on or off
    */
   function toggleCaptions() {
     const btn = getCaptionsButton();
@@ -315,11 +351,12 @@
   }
 
   /**
-   * Extracts name from a DOM node or its immediate children
+   * Extracts name from a DOM node or its immediate children (Meet, Teams, Zoom)
    */
   function extractNameFromNode(node) {
     if (!node) return null;
-    const speakerSelectors = ".NWpY1d, .zs75Ib, .NWkf0d, .Fzkgdf, [jsname='W297wb'], .M6CLbe";
+    const speakerSelectors =
+      ".NWpY1d, .zs75Ib, .NWkf0d, .Fzkgdf, [jsname='W297wb'], .M6CLbe, span[data-tid='author-name'], .ui-chat__item__author, span[class*='author' i], span.closed-caption-speaker, .closed-caption-item strong";
 
     if (node.matches && node.matches(speakerSelectors)) {
       const txt = (node.innerText || node.textContent || "").trim();
@@ -374,7 +411,8 @@
       }
 
       // Check inside this ancestor
-      const speakerSelectors = ".NWpY1d, .zs75Ib, .NWkf0d, .Fzkgdf, [jsname='W297wb'], .M6CLbe";
+      const speakerSelectors =
+        ".NWpY1d, .zs75Ib, .NWkf0d, .Fzkgdf, [jsname='W297wb'], .M6CLbe, span[data-tid='author-name'], .ui-chat__item__author, span[class*='author' i], span.closed-caption-speaker";
       const found = curr.querySelectorAll(speakerSelectors);
       for (const node of found) {
         if (node !== el && !el.contains(node)) {
@@ -396,7 +434,7 @@
       curr = curr.parentElement;
     }
 
-    // 3. Check for text prefix like "Harsh: ..."
+    // 3. Check for text prefix like "Alex: ..."
     const raw = (el.innerText || el.textContent || "").trim();
     const prefixMatch = raw.match(/^([A-Z][a-zA-Z0-9_\s]{1,25}):\s+(.+)$/);
     if (prefixMatch && !isSystemAnnouncement(prefixMatch[1])) {
@@ -407,18 +445,17 @@
   }
 
   /**
-   * Scrapes captions using multi-selector detection (works on all Meet versions)
+   * Scrapes captions using multi-selector detection across Google Meet, Teams, and Zoom
    */
   function handleCaptionMutations() {
-    // Strategy 1: Look for modern Meet speech text elements (.ygicle.VbkSUe, .VbkSUe, .iTTPOb, span.ygZ0De)
-    const textElements = document.querySelectorAll(
+    // Strategy 1: Google Meet speech text elements (.ygicle.VbkSUe, .VbkSUe, span.ygZ0De)
+    const meetElements = document.querySelectorAll(
       ".ygicle.VbkSUe, .VbkSUe, span.ygZ0De, span.jT30ne, .iTTPOb, span.CNusmb"
     );
 
-    if (textElements && textElements.length > 0) {
-      // Pick the latest active text element
-      for (let i = textElements.length - 1; i >= 0; i--) {
-        const el = textElements[i];
+    if (meetElements && meetElements.length > 0) {
+      for (let i = meetElements.length - 1; i >= 0; i--) {
+        const el = meetElements[i];
         if (isExcludedElement(el)) continue;
 
         const rawText = (el.innerText || el.textContent || "").trim();
@@ -430,22 +467,58 @@
       }
     }
 
-    // Strategy 2: Look for semantic region containers (e.g. [role="region"][aria-label*="caption" i])
+    // Strategy 2: Microsoft Teams Web closed-caption elements
+    const teamsElements = document.querySelectorAll(
+      "div[data-tid='closed-caption-text'], span[data-tid='closed-caption-text'], div[data-tid='closed-captions-renderer'] p, div[class*='ui-chat__item__message'], span[class*='caption-text']"
+    );
+
+    if (teamsElements && teamsElements.length > 0) {
+      for (let i = teamsElements.length - 1; i >= 0; i--) {
+        const el = teamsElements[i];
+        const rawText = (el.innerText || el.textContent || "").trim();
+        if (!rawText || rawText.length < 2 || isSystemAnnouncement(rawText)) continue;
+
+        const speaker = findSpeakerForElement(el);
+        processExtractedText(speaker, rawText);
+        return;
+      }
+    }
+
+    // Strategy 3: Zoom Web closed-caption elements
+    const zoomElements = document.querySelectorAll(
+      "span.closed-caption-content, div.closed-caption-item, span.closed-caption-item, div.closed-caption-window p, div[class*='closed-caption'] span"
+    );
+
+    if (zoomElements && zoomElements.length > 0) {
+      for (let i = zoomElements.length - 1; i >= 0; i--) {
+        const el = zoomElements[i];
+        const rawText = (el.innerText || el.textContent || "").trim();
+        if (!rawText || rawText.length < 2 || isSystemAnnouncement(rawText)) continue;
+
+        const speaker = findSpeakerForElement(el);
+        processExtractedText(speaker, rawText);
+        return;
+      }
+    }
+
+    // Strategy 4: Fallback semantic region containers across platforms
     const containerSelectors = [
       '[role="region"][aria-label*="caption" i]',
       '[role="region"][aria-label*="subtitle" i]',
+      'div[data-tid="closed-captions-renderer"]',
+      'div.closed-caption-container',
       '[jsname="dsyhDe"]',
       'div[jsname="YS77vf"]',
-      'div[jsname="tgaKEf"]'
+      'div[jsname="tgaKEf"]',
     ];
 
     for (const sel of containerSelectors) {
       const container = document.querySelector(sel);
       if (container && !isExcludedElement(container)) {
-        const speaker = findSpeakerName(container);
         let text = (container.innerText || container.textContent || "").trim();
 
         if (text && text.length >= 2 && !isSystemAnnouncement(text)) {
+          const speaker = findSpeakerForElement(container);
           processExtractedText(speaker, text);
           return;
         }
@@ -482,6 +555,7 @@
     sendRuntimeMessage({
       type: "MEET_STATUS",
       data: {
+        platform: PLATFORM,
         inCall,
         captionsEnabled: captionsOn,
         url: window.location.href,
@@ -495,13 +569,16 @@
   }
 
   /**
-   * Insert text into Meet chat if open
+   * Insert text into in-call chat across Google Meet, Teams, or Zoom
    */
   function insertIntoMeetChat(text) {
     const chatInput =
       document.querySelector("textarea[aria-label*='Send a message' i]") ||
       document.querySelector("textarea[aria-label*='Chat' i]") ||
-      document.querySelector("div[contenteditable='true'][aria-label*='message' i]");
+      document.querySelector("div[contenteditable='true'][aria-label*='message' i]") ||
+      document.querySelector("div[data-tid='ckeditor-replyConversation']") ||
+      document.querySelector("div[role='textbox'][aria-label*='message' i]") ||
+      document.querySelector("textarea.chat-box__chat-textarea");
 
     if (chatInput) {
       chatInput.focus();
@@ -522,6 +599,7 @@
     switch (message.type) {
       case "GET_MEET_STATUS":
         sendResponse({
+          platform: PLATFORM,
           inCall: isInCall(),
           captionsEnabled: areCaptionsEnabled(),
           url: window.location.href,
