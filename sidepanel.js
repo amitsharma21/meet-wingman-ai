@@ -617,37 +617,46 @@ ${dialogueText}`;
     }
   }
 
-  // Attempt to repair truncated JSON (unclosed quotes, braces, brackets)
+  // Attempt to repair truncated JSON (unclosed quotes, braces, brackets) using a LIFO stack
   function tryRepairJson(str) {
     if (!str) return null;
     let s = str.trim();
 
+    // Strip trailing commas before } or ]
+    s = s.replace(/,\s*([\}\]])/g, "$1").replace(/,\s*([\}\]])/g, "$1");
+
     let inString = false;
-    let openBraces = 0;
-    let openBrackets = 0;
+    const stack = [];
 
     for (let i = 0; i < s.length; i++) {
       const ch = s[i];
       if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) {
         inString = !inString;
       } else if (!inString) {
-        if (ch === '{') openBraces++;
-        else if (ch === '}') openBraces--;
-        else if (ch === '[') openBrackets++;
-        else if (ch === ']') openBrackets--;
+        if (ch === '{') {
+          stack.push('}');
+        } else if (ch === '[') {
+          stack.push(']');
+        } else if (ch === '}' || ch === ']') {
+          if (stack.length > 0 && stack[stack.length - 1] === ch) {
+            stack.pop();
+          }
+        }
       }
     }
 
     if (inString) s += '"';
+
+    // Strip trailing commas, colons, or incomplete properties before closing
     s = s.replace(/,\s*$/, "").replace(/:\s*$/, ':""');
-    while (openBraces > 0) {
-      s += "}";
-      openBraces--;
+    s = s.replace(/,\s*([\}\]])/g, "$1");
+
+    // Close delimiters in exact reverse order (LIFO)
+    while (stack.length > 0) {
+      s += stack.pop();
     }
-    while (openBrackets > 0) {
-      s += "]";
-      openBrackets--;
-    }
+
+    s = s.replace(/,\s*([\}\]])/g, "$1");
 
     try {
       return JSON.parse(s);
@@ -661,6 +670,7 @@ ${dialogueText}`;
     const list = [];
     if (!text) return list;
 
+    // Pattern A: matches "question": "..."
     const qMatches = [...text.matchAll(/"question"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
     const tMatches = [...text.matchAll(/"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
     const cMatches = [...text.matchAll(/"category"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)];
@@ -689,27 +699,39 @@ ${dialogueText}`;
   function extractQuestionsSafely(rawText) {
     if (!rawText || typeof rawText !== "string") return null;
 
+    // Helper: strip comments and trailing commas before } or ] which cause "Unexpected token }" or "]"
+    const sanitizeJsonStr = (str) => {
+      return str
+        .replace(/,\s*([\}\]])/g, "$1")
+        .replace(/,\s*([\}\]])/g, "$1")
+        .replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, "$1")
+        .trim();
+    };
+
     let parsed = null;
 
-    // 1. Direct JSON parse
+    // 1. Direct JSON parse (sanitized)
     try {
-      parsed = JSON.parse(rawText.trim());
+      parsed = JSON.parse(sanitizeJsonStr(rawText));
     } catch (e1) {
-      // 2. Strip markdown fences
-      const clean = rawText
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
+      // 2. Strip markdown fences (```json ... ```)
+      const clean = sanitizeJsonStr(
+        rawText
+          .replace(/^```(?:json)?\s*/i, "")
+          .replace(/\s*```$/i, "")
+      );
+
       try {
         parsed = JSON.parse(clean);
       } catch (e2) {
         // 3. Extract JSON object substring
         const objMatch = clean.match(/\{[\s\S]*\}/);
         if (objMatch) {
+          const sObj = sanitizeJsonStr(objMatch[0]);
           try {
-            parsed = JSON.parse(objMatch[0]);
+            parsed = JSON.parse(sObj);
           } catch (e3) {
-            parsed = tryRepairJson(objMatch[0]);
+            parsed = tryRepairJson(sObj);
           }
         }
 
@@ -717,10 +739,11 @@ ${dialogueText}`;
         if (!parsed) {
           const arrMatch = clean.match(/\[[\s\S]*\]/);
           if (arrMatch) {
+            const sArr = sanitizeJsonStr(arrMatch[0]);
             try {
-              parsed = JSON.parse(arrMatch[0]);
+              parsed = JSON.parse(sArr);
             } catch (e4) {
-              parsed = tryRepairJson(arrMatch[0]);
+              parsed = tryRepairJson(sArr);
             }
           }
         }
