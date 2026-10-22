@@ -23,9 +23,10 @@ chrome.runtime.onInstalled.addListener(() => {
 
     meetingPatterns.forEach((pattern) => {
       chrome.tabs.query({ url: pattern }, (tabs) => {
-        if (tabs && tabs.length > 0) {
+        if (chrome.runtime.lastError || !tabs) return;
+        if (tabs.length > 0) {
           tabs.forEach((tab) => {
-            if (tab.id) {
+            if (tab && tab.id) {
               chrome.scripting
                 .executeScript({
                   target: { tabId: tab.id },

@@ -4,9 +4,21 @@
  */
 
 (function () {
+  // Global safety error listeners to prevent uncaught runtime warnings
+  window.addEventListener("unhandledrejection", (event) => {
+    console.warn("[Meet Wingman AI] Handled promise rejection:", event.reason);
+    if (event.preventDefault) event.preventDefault();
+  });
+
+  window.addEventListener("error", (event) => {
+    console.warn("[Meet Wingman AI] Handled window error:", event.message);
+  });
+
   // Configure PDF.js worker URL
-  if (window.pdfjsLib) {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.js");
+  if (window.pdfjsLib && chrome.runtime && chrome.runtime.getURL) {
+    try {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.js");
+    } catch (e) {}
   }
 
   // DOM Elements
@@ -436,34 +448,46 @@
 
   // Helper to find active call tab across Google Meet, Teams, or Zoom in any window
   function findMeetTab(callback) {
-    // 1. Check if active tab in current window is a meeting
-    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
-      const activeTab = activeTabs && activeTabs[0];
-      if (activeTab && activeTab.url && isMeetingUrl(activeTab.url)) {
-        callback(activeTab);
-        return;
-      }
+    if (!chrome.tabs || !chrome.tabs.query) {
+      callback(null);
+      return;
+    }
 
-      // 2. Query all tabs matching meeting patterns across all windows
-      chrome.tabs.query({ url: MEETING_PATTERNS }, (matchedTabs) => {
-        if (matchedTabs && matchedTabs.length > 0) {
-          const activeCallTab = matchedTabs.find((t) => t.active) || matchedTabs[0];
-          callback(activeCallTab);
+    try {
+      // 1. Check if active tab in current window is a meeting
+      chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+        const _err1 = chrome.runtime.lastError;
+        const activeTab = activeTabs && activeTabs[0];
+        if (activeTab && activeTab.url && isMeetingUrl(activeTab.url)) {
+          callback(activeTab);
           return;
         }
 
-        // 3. Fallback: search all open tabs across all windows if url filtering was restricted
-        chrome.tabs.query({}, (allTabs) => {
-          const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
-          if (callTabs.length > 0) {
-            const activeCallTab = callTabs.find((t) => t.active) || callTabs[0];
+        // 2. Query all tabs matching meeting patterns across all windows
+        chrome.tabs.query({ url: MEETING_PATTERNS }, (matchedTabs) => {
+          const _err2 = chrome.runtime.lastError;
+          if (matchedTabs && matchedTabs.length > 0) {
+            const activeCallTab = matchedTabs.find((t) => t.active) || matchedTabs[0];
             callback(activeCallTab);
-          } else {
-            callback(null);
+            return;
           }
+
+          // 3. Fallback: search all open tabs across all windows if url filtering was restricted
+          chrome.tabs.query({}, (allTabs) => {
+            const _err3 = chrome.runtime.lastError;
+            const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
+            if (callTabs.length > 0) {
+              const activeCallTab = callTabs.find((t) => t.active) || callTabs[0];
+              callback(activeCallTab);
+            } else {
+              callback(null);
+            }
+          });
         });
       });
-    });
+    } catch (e) {
+      callback(null);
+    }
   }
 
   // Update Status Banner UI
@@ -519,13 +543,21 @@
   async function toggleMeetCaptions() {
     findMeetTab((tab) => {
       if (tab && tab.id) {
-        chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_MEET_CAPTIONS" }, (response) => {
-          if (chrome.runtime.lastError) return;
-          if (response && response.captionsEnabled) {
-            updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true, platform: response.platform });
-            showToast("Captions turned ON");
-          }
-        });
+        try {
+          chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_MEET_CAPTIONS" }, (response) => {
+            const _err = chrome.runtime.lastError;
+            if (_err || !response) {
+              showToast("Could not reach meeting tab");
+              return;
+            }
+            if (response && response.captionsEnabled) {
+              updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true, platform: response.platform });
+              showToast("Captions turned ON");
+            }
+          });
+        } catch (e) {
+          showToast("Could not reach meeting tab");
+        }
       } else {
         showToast("Open your meeting call first (Meet, Teams, Zoom)");
       }
@@ -536,16 +568,22 @@
   async function insertIntoMeetChat(questionText) {
     findMeetTab((tab) => {
       if (tab && tab.id) {
-        chrome.tabs.sendMessage(tab.id, { type: "INSERT_MEET_CHAT", text: questionText }, (res) => {
-          if (chrome.runtime.lastError || !res || !res.success) {
-            navigator.clipboard.writeText(questionText);
-            showToast("Copied to clipboard (Paste in chat)");
-            return;
-          }
-          showToast("Pasted into meeting chat!");
-        });
+        try {
+          chrome.tabs.sendMessage(tab.id, { type: "INSERT_MEET_CHAT", text: questionText }, (res) => {
+            const _err = chrome.runtime.lastError;
+            if (_err || !res || !res.success) {
+              navigator.clipboard.writeText(questionText).catch(() => {});
+              showToast("Copied to clipboard (Paste in chat)");
+              return;
+            }
+            showToast("Pasted into meeting chat!");
+          });
+        } catch (e) {
+          navigator.clipboard.writeText(questionText).catch(() => {});
+          showToast("Copied to clipboard");
+        }
       } else {
-        navigator.clipboard.writeText(questionText);
+        navigator.clipboard.writeText(questionText).catch(() => {});
         showToast("Copied to clipboard");
       }
     });
@@ -927,7 +965,7 @@ ${dialogueText}`;
     suggestionsList.querySelectorAll(".btn-copy-q").forEach((btn) => {
       btn.addEventListener("click", () => {
         const text = btn.getAttribute("data-question");
-        navigator.clipboard.writeText(text);
+        navigator.clipboard.writeText(text).catch(() => {});
         btn.classList.add("copied");
         btn.textContent = "Copied!";
         showToast("Copied to clipboard");
@@ -953,7 +991,9 @@ ${dialogueText}`;
       return;
     }
 
-    const persona = personaSelect.options[personaSelect.selectedIndex].text;
+    const persona = (personaSelect && personaSelect.selectedOptions && personaSelect.selectedOptions[0])
+      ? personaSelect.selectedOptions[0].text
+      : (config.persona || "Product Manager");
     const dateStr = new Date().toISOString().replace(/T/, " ").replace(/\..+/, "");
 
     let md = `# Meeting Notes - ${dateStr}\n\n`;
@@ -1168,36 +1208,26 @@ ${dialogueText}`;
           return;
         }
 
-        chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (response) => {
-          if (chrome.runtime.lastError || !response) {
-            // Content script was not active on this tab (e.g. page was loaded before extension reload)
-            // Programmatically inject content.js!
-            if (chrome.scripting) {
-              chrome.scripting.executeScript(
-                {
-                  target: { tabId: tab.id },
-                  files: ["content.js"],
-                },
-                () => {
-                  setTimeout(() => {
-                    chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (res2) => {
-                      if (res2) {
-                        updateMeetStatus({ ...res2, hasTab: true });
-                      } else {
-                        updateMeetStatus({ hasTab: true, inCall: false, inPreJoin: false, captionsEnabled: false, url: tab.url });
-                      }
-                    });
-                  }, 350);
-                }
-              );
-            } else {
-              updateMeetStatus({ hasTab: true, inCall: false, inPreJoin: false, captionsEnabled: false, url: tab.url });
+        try {
+          chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (response) => {
+            // ALWAYS read chrome.runtime.lastError first so Chrome knows it is handled
+            const _err = chrome.runtime.lastError;
+            if (_err || !response) {
+              updateMeetStatus({
+                hasTab: true,
+                inCall: false,
+                inPreJoin: false,
+                captionsEnabled: false,
+                url: tab.url || "",
+              });
+              return;
             }
-            return;
-          }
 
-          updateMeetStatus({ ...response, hasTab: true });
-        });
+            updateMeetStatus({ ...response, hasTab: true });
+          });
+        } catch (err) {
+          updateMeetStatus({ hasTab: true, inCall: false, inPreJoin: false, captionsEnabled: false, url: tab.url || "" });
+        }
       });
     }
 
@@ -1207,20 +1237,30 @@ ${dialogueText}`;
     setInterval(checkCurrentTabStatus, 3000);
 
     if (chrome.tabs && chrome.tabs.onActivated) {
-      chrome.tabs.onActivated.addListener(checkCurrentTabStatus);
+      chrome.tabs.onActivated.addListener(() => {
+        checkCurrentTabStatus();
+      });
     }
     if (chrome.tabs && chrome.tabs.onUpdated) {
-      chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-        if (changeInfo.status === "complete") {
+      chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+        if (changeInfo && changeInfo.status === "complete") {
           checkCurrentTabStatus();
         }
       });
     }
     if (chrome.tabs && chrome.tabs.onRemoved) {
-      chrome.tabs.onRemoved.addListener(checkCurrentTabStatus);
+      chrome.tabs.onRemoved.addListener(() => {
+        checkCurrentTabStatus();
+      });
     }
   }
 
   // Init
-  loadState().then(setupEventListeners);
+  loadState()
+    .then(() => {
+      setupEventListeners();
+    })
+    .catch((err) => {
+      console.warn("[Meet Wingman AI] Init error:", err);
+    });
 })();
