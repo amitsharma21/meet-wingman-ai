@@ -439,6 +439,27 @@
     );
   }
 
+  // Detects if URL is an actual meeting call room (not just the homepage/landing screen)
+  function isLiveMeetingCallUrl(url) {
+    if (!url) return false;
+    const u = url.toLowerCase();
+    if (u.includes("meet.google.com")) {
+      return (
+        /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(u) ||
+        u.includes("/call/") ||
+        u.includes("/lookup/") ||
+        u.includes("/_meet/")
+      );
+    }
+    if (u.includes("teams.microsoft.com") || u.includes("teams.live.com")) {
+      return u.includes("calling") || u.includes("meetup-join");
+    }
+    if (u.includes("zoom.us")) {
+      return u.includes("/wc/") || u.includes("/j/");
+    }
+    return false;
+  }
+
   const MEETING_PATTERNS = [
     "*://meet.google.com/*",
     "*://teams.microsoft.com/*",
@@ -454,35 +475,45 @@
     }
 
     try {
-      // 1. Check if active tab in current window is a meeting
-      chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
-        const _err1 = chrome.runtime.lastError;
-        const activeTab = activeTabs && activeTabs[0];
-        if (activeTab && activeTab.url && isMeetingUrl(activeTab.url)) {
-          callback(activeTab);
+      chrome.tabs.query({ url: MEETING_PATTERNS }, (matchedTabs) => {
+        const _err = chrome.runtime.lastError;
+        if (matchedTabs && matchedTabs.length > 0) {
+          // Sort to prioritize:
+          // 1. Live call room URLs that are active
+          // 2. Live call room URLs (background tab or other window)
+          // 3. Other meeting tabs that are active
+          // 4. Other meeting tabs (e.g. landing page)
+          matchedTabs.sort((a, b) => {
+            const aCall = isLiveMeetingCallUrl(a.url);
+            const bCall = isLiveMeetingCallUrl(b.url);
+            if (aCall && !bCall) return -1;
+            if (!aCall && bCall) return 1;
+            if (a.active && !b.active) return -1;
+            if (!a.active && b.active) return 1;
+            return 0;
+          });
+          callback(matchedTabs[0]);
           return;
         }
 
-        // 2. Query all tabs matching meeting patterns across all windows
-        chrome.tabs.query({ url: MEETING_PATTERNS }, (matchedTabs) => {
+        // Fallback: search all open tabs across all windows
+        chrome.tabs.query({}, (allTabs) => {
           const _err2 = chrome.runtime.lastError;
-          if (matchedTabs && matchedTabs.length > 0) {
-            const activeCallTab = matchedTabs.find((t) => t.active) || matchedTabs[0];
-            callback(activeCallTab);
-            return;
+          const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
+          if (callTabs.length > 0) {
+            callTabs.sort((a, b) => {
+              const aCall = isLiveMeetingCallUrl(a.url);
+              const bCall = isLiveMeetingCallUrl(b.url);
+              if (aCall && !bCall) return -1;
+              if (!aCall && bCall) return 1;
+              if (a.active && !b.active) return -1;
+              if (!a.active && b.active) return 1;
+              return 0;
+            });
+            callback(callTabs[0]);
+          } else {
+            callback(null);
           }
-
-          // 3. Fallback: search all open tabs across all windows if url filtering was restricted
-          chrome.tabs.query({}, (allTabs) => {
-            const _err3 = chrome.runtime.lastError;
-            const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
-            if (callTabs.length > 0) {
-              const activeCallTab = callTabs.find((t) => t.active) || callTabs[0];
-              callback(activeCallTab);
-            } else {
-              callback(null);
-            }
-          });
         });
       });
     } catch (e) {
@@ -499,6 +530,11 @@
       pName = "Microsoft Teams";
     } else if (data.platform === "zoom" || (data.url && data.url.includes("zoom"))) {
       pName = "Zoom";
+    }
+
+    // Safety: If URL contains an active meeting code and not in pre-join, user is inside call
+    if (data.url && isLiveMeetingCallUrl(data.url) && !data.inPreJoin) {
+      data.inCall = true;
     }
 
     // State 1: No meeting tab open in browser
@@ -1201,6 +1237,8 @@ ${dialogueText}`;
       }
     });
 
+    let isInjectingScript = false;
+
     function checkCurrentTabStatus() {
       findMeetTab((tab) => {
         if (!tab || !tab.id) {
@@ -1208,25 +1246,56 @@ ${dialogueText}`;
           return;
         }
 
+        const isCallUrl = isLiveMeetingCallUrl(tab.url);
+
         try {
           chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (response) => {
-            // ALWAYS read chrome.runtime.lastError first so Chrome knows it is handled
-            const _err = chrome.runtime.lastError;
+            const _err = chrome.runtime.lastError; // Read to suppress unchecked error!
             if (_err || !response) {
+              // Reflect meeting status from tab URL immediately
               updateMeetStatus({
                 hasTab: true,
-                inCall: false,
+                inCall: isCallUrl,
                 inPreJoin: false,
                 captionsEnabled: false,
                 url: tab.url || "",
               });
+
+              // Programmatically inject content.js once if tab was loaded before extension reload
+              if (chrome.scripting && !isInjectingScript && tab.id) {
+                isInjectingScript = true;
+                chrome.scripting.executeScript(
+                  {
+                    target: { tabId: tab.id },
+                    files: ["content.js"],
+                  },
+                  () => {
+                    const _injErr = chrome.runtime.lastError; // Read to suppress unchecked error!
+                    setTimeout(() => {
+                      isInjectingScript = false;
+                      chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (res2) => {
+                        const _msgErr = chrome.runtime.lastError; // Read to suppress unchecked error!
+                        if (!_msgErr && res2) {
+                          updateMeetStatus({ ...res2, hasTab: true });
+                        }
+                      });
+                    }, 350);
+                  }
+                );
+              }
               return;
             }
 
             updateMeetStatus({ ...response, hasTab: true });
           });
         } catch (err) {
-          updateMeetStatus({ hasTab: true, inCall: false, inPreJoin: false, captionsEnabled: false, url: tab.url || "" });
+          updateMeetStatus({
+            hasTab: true,
+            inCall: isCallUrl,
+            inPreJoin: false,
+            captionsEnabled: false,
+            url: tab.url || "",
+          });
         }
       });
     }

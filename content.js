@@ -127,6 +127,7 @@
       /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(pathname) ||
       /[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(href) ||
       pathname.includes("/call/") ||
+      pathname.includes("/lookup/") ||
       pathname.includes("/_meet/");
 
     if (!hasMeetingCode) {
