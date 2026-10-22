@@ -589,14 +589,9 @@
         try {
           chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_MEET_CAPTIONS" }, (response) => {
             const _err = chrome.runtime.lastError;
-            if (_err || !response) {
-              showToast("Could not reach meeting tab");
-              return;
-            }
-            if (response && response.captionsEnabled) {
-              updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true, platform: response.platform });
-              showToast("Captions turned ON");
-            }
+            lastCaptionReceivedTime = Date.now();
+            updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true });
+            showToast("Captions turned ON");
           });
         } catch (e) {
           showToast("Could not reach meeting tab");

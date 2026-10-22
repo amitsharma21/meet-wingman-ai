@@ -255,6 +255,11 @@
       "[role='region'][aria-label*='sous-titre' i]",
       "[role='region'][aria-label*='subtítulo' i]",
       "[role='region'][aria-label*='untertitel' i]",
+      "[role='region'][aria-live='polite']",
+      "[aria-live='polite'][role='region']",
+      "div.a4bIc",
+      ".nMcdL",
+      ".bh44bd",
       "div[data-tid='closed-caption-text']",
       "span[data-tid='closed-caption-text']",
       "div[data-tid='closed-captions-renderer']",
@@ -294,6 +299,18 @@
 
       // Direct ARIA state flags
       if (ariaPressed === "true" || ariaChecked === "true" || dataIsActive === "true") {
+        return true;
+      }
+
+      // Google Workspace Enterprise captions toggle states:
+      // In Google Workspace, the button says "Captions on" (or "Captions On") when captions are active!
+      if (
+        ariaLabel.includes("captions on") ||
+        ariaLabel.includes("caption on") ||
+        ariaLabel.includes("subtitles on") ||
+        tooltip.includes("captions on") ||
+        tooltip.includes("subtitles on")
+      ) {
         return true;
       }
 
@@ -624,9 +641,9 @@
    * Scrapes captions using multi-selector detection across Google Meet, Teams, and Zoom
    */
   function handleCaptionMutations() {
-    // Strategy 1: Google Meet speech text elements (.ygicle.VbkSUe, .VbkSUe, span.ygZ0De)
+    // Strategy 1: Google Meet speech text elements (.ygicle.VbkSUe, .VbkSUe, span.ygZ0De, .nMcdL, .bh44bd)
     const meetElements = document.querySelectorAll(
-      ".ygicle.VbkSUe, .VbkSUe, span.ygZ0De, span.jT30ne, .iTTPOb, span.CNusmb"
+      ".ygicle.VbkSUe, .VbkSUe, span.ygZ0De, span.jT30ne, .iTTPOb, span.CNusmb, .nMcdL, .bh44bd, .a4bIc span"
     );
 
     if (meetElements && meetElements.length > 0) {
@@ -677,10 +694,13 @@
       }
     }
 
-    // Strategy 4: Fallback semantic region containers across platforms
+    // Strategy 4: Fallback semantic live region containers across platforms (Workspace Enterprise & Dynamic Builds)
     const containerSelectors = [
       '[role="region"][aria-label*="caption" i]',
       '[role="region"][aria-label*="subtitle" i]',
+      '[role="region"][aria-live="polite"]',
+      '[aria-live="polite"][role="region"]',
+      'div.a4bIc',
       'div[data-tid="closed-captions-renderer"]',
       'div.closed-caption-container',
       '[jsname="dsyhDe"]',
@@ -690,13 +710,25 @@
 
     for (const sel of containerSelectors) {
       const container = document.querySelector(sel);
-      if (container && !isExcludedElement(container)) {
+      if (container && container.isConnected && !isExcludedElement(container)) {
         let text = (container.innerText || container.textContent || "").trim();
 
         if (text && text.length >= 2 && !isSystemAnnouncement(text)) {
-          const speaker = findSpeakerForElement(container);
-          processExtractedText(speaker, text);
-          return;
+          let speaker = "You";
+          const speakerNode = container.querySelector(".NWpY1d, .zs75Ib, img[alt], [class*='author' i]");
+          if (speakerNode) {
+            speaker = (speakerNode.alt || speakerNode.innerText || speakerNode.textContent || "").trim() || "You";
+            if (text.toLowerCase().startsWith(speaker.toLowerCase())) {
+              text = text.slice(speaker.length).replace(/^[:\s-]+/, "").trim();
+            }
+          } else {
+            speaker = findSpeakerForElement(container);
+          }
+
+          if (text && text.length >= 2 && !isSystemAnnouncement(text)) {
+            processExtractedText(speaker, text);
+            return;
+          }
         }
       }
     }
