@@ -75,6 +75,12 @@ body {
   font-weight: 500;
 }
 
+.status-idle {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
 .status-waiting {
   background: rgba(234, 179, 8, 0.1);
   color: #fde047;

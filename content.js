@@ -84,9 +84,9 @@
   const PLATFORM = detectPlatform();
 
   /**
-   * Checks if user is inside an active meeting call (Meet, Teams, Zoom)
+   * Checks if user is inside an active meeting call or in pre-join screen
    */
-  function isInCall() {
+  function checkCallStatus() {
     const pathname = window.location.pathname.toLowerCase();
     const href = window.location.href.toLowerCase();
 
@@ -101,7 +101,10 @@
         document.querySelector("div[id*='calling-container']") ||
         document.querySelector(".calling-call-screen")
       );
-      return hasTeamsCallUI || pathname.includes("calling") || pathname.includes("meetup-join");
+      return {
+        inCall: hasTeamsCallUI || pathname.includes("calling") || pathname.includes("meetup-join"),
+        inPreJoin: false,
+      };
     }
 
     if (PLATFORM === "zoom") {
@@ -113,7 +116,10 @@
         document.querySelector(".closed-caption-container") ||
         document.querySelector("button[aria-label*='mute' i]")
       );
-      return hasZoomCallUI || pathname.includes("/wc/") || pathname.includes("/j/");
+      return {
+        inCall: hasZoomCallUI || pathname.includes("/wc/") || pathname.includes("/j/"),
+        inPreJoin: false,
+      };
     }
 
     // Google Meet
@@ -124,9 +130,27 @@
       pathname.includes("/_meet/");
 
     if (!hasMeetingCode) {
-      return false;
+      return { inCall: false, inPreJoin: false };
     }
 
+    // In-call UI controls (if any of these exist, user is actively inside the meeting)
+    const hasInCallControls = !!(
+      document.querySelector("button[jsname='CQyBDb']") ||
+      document.querySelector("button[aria-label*='leave' i]") ||
+      document.querySelector("button[aria-label*='end call' i]") ||
+      document.querySelector("button[data-tooltip*='leave' i]") ||
+      document.querySelector("button[aria-label*='chat' i]") ||
+      document.querySelector("button[aria-label*='people' i]") ||
+      document.querySelector("button[aria-label*='participants' i]") ||
+      document.querySelector("div[data-allocation-index]") ||
+      document.querySelector("div[data-meeting-code]") ||
+      document.querySelector("div[jscontroller='kAPstf']") ||
+      document.querySelector(".VbkSUe") ||
+      document.querySelector(".iTTPOb") ||
+      getCaptionsButton()
+    );
+
+    // Check if in pre-join room ("Ready to join?" screen)
     const joinBtn = document.querySelector(
       "button[jsname='Qx7uuf'], button[aria-label*='Join' i], button[aria-label*='Ask to join' i]"
     );
@@ -134,11 +158,15 @@
     const bodyText = document.body ? (document.body.innerText || "") : "";
     const isReadyToJoin = bodyText.includes("Ready to join?") || bodyText.includes("Ask to join");
 
-    if (hasJoinButton && isReadyToJoin) {
-      return false;
+    if (hasJoinButton && isReadyToJoin && !hasInCallControls) {
+      return { inCall: false, inPreJoin: true };
     }
 
-    return true;
+    return { inCall: hasInCallControls || hasMeetingCode, inPreJoin: false };
+  }
+
+  function isInCall() {
+    return checkCallStatus().inCall;
   }
 
   /**
@@ -549,14 +577,17 @@
    * Periodic status check broadcast to side panel
    */
   function broadcastStatus() {
-    const inCall = isInCall();
+    const status = checkCallStatus();
+    const inCall = status.inCall;
     const captionsOn = areCaptionsEnabled();
 
     sendRuntimeMessage({
       type: "MEET_STATUS",
       data: {
         platform: PLATFORM,
+        hasTab: true,
         inCall,
+        inPreJoin: status.inPreJoin,
         captionsEnabled: captionsOn,
         url: window.location.href,
         timestamp: Date.now(),
@@ -597,14 +628,18 @@
   // Listen for messages from side panel or background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message.type) {
-      case "GET_MEET_STATUS":
+      case "GET_MEET_STATUS": {
+        const status = checkCallStatus();
         sendResponse({
           platform: PLATFORM,
-          inCall: isInCall(),
+          hasTab: true,
+          inCall: status.inCall,
+          inPreJoin: status.inPreJoin,
           captionsEnabled: areCaptionsEnabled(),
           url: window.location.href,
         });
         break;
+      }
 
       case "TOGGLE_MEET_CAPTIONS":
         const toggled = toggleCaptions();

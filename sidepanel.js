@@ -358,7 +358,7 @@
     if (!turn || !turn.text) return;
 
     // We are actively receiving captions from Meet! Ensure status reflects connected
-    updateMeetStatus({ inCall: true, captionsEnabled: true });
+    updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true });
 
     if (!turn.isFinal) {
       interimSpeakerName.textContent = turn.speaker || "Speaking...";
@@ -427,6 +427,13 @@
     );
   }
 
+  const MEETING_PATTERNS = [
+    "*://meet.google.com/*",
+    "*://teams.microsoft.com/*",
+    "*://teams.live.com/*",
+    "*://*.zoom.us/*",
+  ];
+
   // Helper to find active call tab across Google Meet, Teams, or Zoom in any window
   function findMeetTab(callback) {
     // 1. Check if active tab in current window is a meeting
@@ -437,15 +444,24 @@
         return;
       }
 
-      // 2. Search all open tabs across all windows for Meet, Teams, or Zoom
-      chrome.tabs.query({}, (allTabs) => {
-        const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
-        if (callTabs.length > 0) {
-          const activeCallTab = callTabs.find((t) => t.active) || callTabs[0];
+      // 2. Query all tabs matching meeting patterns across all windows
+      chrome.tabs.query({ url: MEETING_PATTERNS }, (matchedTabs) => {
+        if (matchedTabs && matchedTabs.length > 0) {
+          const activeCallTab = matchedTabs.find((t) => t.active) || matchedTabs[0];
           callback(activeCallTab);
-        } else {
-          callback(null);
+          return;
         }
+
+        // 3. Fallback: search all open tabs across all windows if url filtering was restricted
+        chrome.tabs.query({}, (allTabs) => {
+          const callTabs = (allTabs || []).filter((t) => t.url && isMeetingUrl(t.url));
+          if (callTabs.length > 0) {
+            const activeCallTab = callTabs.find((t) => t.active) || callTabs[0];
+            callback(activeCallTab);
+          } else {
+            callback(null);
+          }
+        });
       });
     });
   }
@@ -461,19 +477,42 @@
       pName = "Zoom";
     }
 
+    // State 1: No meeting tab open in browser
+    if (data.hasTab === false) {
+      statusBanner.className = "status-bar status-idle";
+      statusText.textContent = "Ready • Open Meet, Teams, or Zoom";
+      btnFixCaptions.style.display = "none";
+      return;
+    }
+
+    // State 2: Meeting tab open on pre-join screen ("Ready to join?")
+    if (data.inPreJoin) {
+      statusBanner.className = "status-bar status-waiting";
+      statusText.textContent = `In ${pName} • Click 'Join' to start`;
+      btnFixCaptions.style.display = "none";
+      return;
+    }
+
+    // State 3: Meeting tab open on landing page or not inside call
     if (!data.inCall) {
       statusBanner.className = "status-bar status-waiting";
-      statusText.textContent = `Call not active (${pName} / Click to refresh)`;
+      statusText.textContent = `In ${pName} • Start or join a call`;
       btnFixCaptions.style.display = "none";
-    } else if (!data.captionsEnabled) {
+      return;
+    }
+
+    // State 4: In active call, but captions are OFF
+    if (!data.captionsEnabled) {
       statusBanner.className = "status-bar status-captions-off";
       statusText.textContent = `Captions are OFF in ${pName}`;
       btnFixCaptions.style.display = "inline-block";
-    } else {
-      statusBanner.className = "status-bar status-connected";
-      statusText.textContent = `Listening to ${pName} captions`;
-      btnFixCaptions.style.display = "none";
+      return;
     }
+
+    // State 5: In active call, captions are ON and streaming
+    statusBanner.className = "status-bar status-connected";
+    statusText.textContent = `Listening to ${pName} captions`;
+    btnFixCaptions.style.display = "none";
   }
 
   // Prompt meeting to toggle captions
@@ -483,7 +522,7 @@
         chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_MEET_CAPTIONS" }, (response) => {
           if (chrome.runtime.lastError) return;
           if (response && response.captionsEnabled) {
-            updateMeetStatus({ inCall: true, captionsEnabled: true, platform: response.platform });
+            updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true, platform: response.platform });
             showToast("Captions turned ON");
           }
         });
@@ -1110,7 +1149,7 @@ ${dialogueText}`;
     });
 
     statusBanner.addEventListener("click", () => {
-      showToast("Checking Google Meet status...");
+      showToast("Checking meeting status...");
       checkCurrentTabStatus();
     });
 
@@ -1125,7 +1164,7 @@ ${dialogueText}`;
     function checkCurrentTabStatus() {
       findMeetTab((tab) => {
         if (!tab || !tab.id) {
-          updateMeetStatus({ inCall: false, captionsEnabled: false });
+          updateMeetStatus({ hasTab: false, inCall: false, inPreJoin: false, captionsEnabled: false });
           return;
         }
 
@@ -1143,21 +1182,21 @@ ${dialogueText}`;
                   setTimeout(() => {
                     chrome.tabs.sendMessage(tab.id, { type: "GET_MEET_STATUS" }, (res2) => {
                       if (res2) {
-                        updateMeetStatus(res2);
+                        updateMeetStatus({ ...res2, hasTab: true });
                       } else {
-                        updateMeetStatus({ inCall: false, captionsEnabled: false, url: tab.url });
+                        updateMeetStatus({ hasTab: true, inCall: false, inPreJoin: false, captionsEnabled: false, url: tab.url });
                       }
                     });
                   }, 350);
                 }
               );
             } else {
-              updateMeetStatus({ inCall: false, captionsEnabled: false, url: tab.url });
+              updateMeetStatus({ hasTab: true, inCall: false, inPreJoin: false, captionsEnabled: false, url: tab.url });
             }
             return;
           }
 
-          updateMeetStatus(response);
+          updateMeetStatus({ ...response, hasTab: true });
         });
       });
     }
@@ -1176,6 +1215,9 @@ ${dialogueText}`;
           checkCurrentTabStatus();
         }
       });
+    }
+    if (chrome.tabs && chrome.tabs.onRemoved) {
+      chrome.tabs.onRemoved.addListener(checkCurrentTabStatus);
     }
   }
 
