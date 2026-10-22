@@ -48,19 +48,25 @@
    */
   function isExcludedElement(el) {
     if (!el) return true;
+    // Known caption classes are never excluded
     if (
-      el.closest(
-        "button, [role='dialog'], [role='menu'], [role='menubar'], [role='toolbar'], [data-tooltip], [data-panel-id]"
-      )
+      el.classList &&
+      (el.classList.contains("VbkSUe") ||
+        el.classList.contains("iTTPOb") ||
+        el.classList.contains("ygZ0De") ||
+        el.classList.contains("ygicle") ||
+        el.classList.contains("CNusmb"))
     ) {
+      return false;
+    }
+
+    if (el.closest("button, [role='menu'], [role='menubar'], [role='toolbar']")) {
       return true;
     }
 
     try {
       const rect = el.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return true;
-      // Google Meet closed captions are displayed in the lower portion of the viewport
-      if (rect.bottom < window.innerHeight * 0.25) return true;
+      if (rect.width === 0 && rect.height === 0) return true;
     } catch (e) {
       // ignore
     }
@@ -170,22 +176,57 @@
     return checkCallStatus().inCall;
   }
 
+  let lastCaptionDetectedTime = 0;
+
   /**
    * Finds the closed captions button across Google Meet, Teams, or Zoom
    */
   function getCaptionsButton() {
-    const btn = document.querySelector(
-      "button[jsname='r8qRAd'], button[id*='closed-captions' i], button[data-tid*='closed-captions' i], button.closed-caption-button, button[aria-label*='caption' i], button[data-tooltip*='caption' i], button[aria-label*='sous-titre' i], button[aria-label*='subtítulo' i], button[aria-label*='untertitel' i]"
-    );
-    if (btn) return btn;
+    const specificSelectors = [
+      "button[aria-label*='caption' i]",
+      "[role='button'][aria-label*='caption' i]",
+      "button[data-tooltip*='caption' i]",
+      "[role='button'][data-tooltip*='caption' i]",
+      "button.r8qRAd",
+      ".r8qRAd",
+      "button[jsname='r8qRAd']",
+      "button[jsname='A5il2e']",
+      "[jsname='A5il2e']",
+      "button[data-tid*='closed-captions' i]",
+      "button[id*='closed-captions' i]",
+      "button.closed-caption-button",
+      "button[aria-label*='sous-titre' i]",
+      "[role='button'][aria-label*='sous-titre' i]",
+      "button[aria-label*='subtítulo' i]",
+      "[role='button'][aria-label*='subtítulo' i]",
+      "button[aria-label*='untertitel' i]",
+      "[role='button'][aria-label*='untertitel' i]",
+    ];
 
-    const allButtons = document.querySelectorAll("button");
+    for (const sel of specificSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.isConnected) return el;
+    }
+
+    const allButtons = document.querySelectorAll("button, [role='button']");
     for (const b of allButtons) {
-      const label = (b.getAttribute("aria-label") || b.getAttribute("data-tooltip") || "").toLowerCase();
-      if (label.includes("caption") || label.includes("closed caption") || label.includes("sous-titre") || label.includes("subtítulo")) {
-        return b;
-      }
-      if ((b.innerText || "").trim().toLowerCase() === "cc") {
+      const label = (b.getAttribute("aria-label") || "").toLowerCase();
+      const tooltip = (b.getAttribute("data-tooltip") || "").toLowerCase();
+      const text = (b.innerText || b.textContent || "").trim().toLowerCase();
+
+      if (
+        label.includes("caption") ||
+        tooltip.includes("caption") ||
+        label.includes("subtitle") ||
+        tooltip.includes("subtitle") ||
+        label.includes("sous-titre") ||
+        label.includes("subtítulo") ||
+        label.includes("untertitel") ||
+        tooltip.includes("(c)") ||
+        label.includes("(c)") ||
+        text === "cc" ||
+        text.includes("closed_caption")
+      ) {
         return b;
       }
     }
@@ -196,28 +237,118 @@
    * Checks if closed captions are currently enabled
    */
   function areCaptionsEnabled() {
-    const activeCaption = document.querySelector(
-      ".ygicle.VbkSUe, .VbkSUe, .iTTPOb, span.ygZ0De, span.jT30ne, span.CNusmb, [role='region'][aria-label*='caption' i], [role='region'][aria-label*='subtitle' i], div[data-tid='closed-caption-text'], span[data-tid='closed-caption-text'], div[data-tid='closed-captions-renderer'], div.closed-caption-container, span.closed-caption-item, div.closed-caption-item"
-    );
-    if (activeCaption && activeCaption.offsetParent !== null) {
+    // 1. If we captured or observed any live captions in the last 25 seconds, captions are definitely ON
+    if (lastCaptionDetectedTime && Date.now() - lastCaptionDetectedTime < 25000) {
       return true;
     }
 
+    // 2. Check if any caption DOM container is present in the document
+    const captionSelectors = [
+      ".ygicle.VbkSUe",
+      ".VbkSUe",
+      ".iTTPOb",
+      "span.ygZ0De",
+      "span.jT30ne",
+      "span.CNusmb",
+      "[role='region'][aria-label*='caption' i]",
+      "[role='region'][aria-label*='subtitle' i]",
+      "[role='region'][aria-label*='sous-titre' i]",
+      "[role='region'][aria-label*='subtítulo' i]",
+      "[role='region'][aria-label*='untertitel' i]",
+      "div[data-tid='closed-caption-text']",
+      "span[data-tid='closed-caption-text']",
+      "div[data-tid='closed-captions-renderer']",
+      "div.closed-caption-container",
+      "span.closed-caption-item",
+      "div.closed-caption-item",
+      "[jsname='dsyhDe']",
+      "[jsname='YS77vf']",
+      "[jsname='tgaKEf']"
+    ];
+
+    for (const sel of captionSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.isConnected) {
+        // Position:fixed elements return offsetParent === null; check computed style instead
+        try {
+          const style = window.getComputedStyle(el);
+          if (style.display !== "none" && style.visibility !== "hidden") {
+            lastCaptionDetectedTime = Date.now();
+            return true;
+          }
+        } catch (e) {
+          lastCaptionDetectedTime = Date.now();
+          return true;
+        }
+      }
+    }
+
+    // 3. Inspect Closed Captions button state
     const btn = getCaptionsButton();
     if (btn) {
       const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
       const tooltip = (btn.getAttribute("data-tooltip") || "").toLowerCase();
       const ariaPressed = btn.getAttribute("aria-pressed");
+      const ariaChecked = btn.getAttribute("aria-checked");
       const dataIsActive = btn.getAttribute("data-is-active");
 
-      if (ariaPressed === "true" || dataIsActive === "true") return true;
-      if (
+      // Direct ARIA state flags
+      if (ariaPressed === "true" || ariaChecked === "true" || dataIsActive === "true") {
+        return true;
+      }
+
+      // Check if button text indicates clicking it will TURN OFF / HIDE / DISABLE captions
+      const isTurnOff =
         ariaLabel.includes("turn off") ||
+        ariaLabel.includes("turn captions off") ||
+        ariaLabel.includes("disable caption") ||
+        ariaLabel.includes("hide caption") ||
+        ariaLabel.includes("stop caption") ||
         ariaLabel.includes("desactivar") ||
         ariaLabel.includes("désactiver") ||
-        tooltip.includes("turn off")
+        ariaLabel.includes("deaktivieren") ||
+        ariaLabel.includes("disattiva") ||
+        ariaLabel.includes("desativar") ||
+        ariaLabel.includes("बंद करें") ||
+        tooltip.includes("turn off") ||
+        tooltip.includes("disable") ||
+        tooltip.includes("hide") ||
+        tooltip.includes("desactivar") ||
+        tooltip.includes("désactiver");
+
+      if (isTurnOff) {
+        return true;
+      }
+
+      // Check if button contains the active "closed_caption" icon (not "closed_caption_off")
+      const btnText = (btn.innerText || btn.textContent || "").toLowerCase();
+      if (btnText.includes("closed_caption") && !btnText.includes("closed_caption_off")) {
+        return true;
+      }
+
+      // Check active CSS classes used by Google Meet for toggled-on buttons
+      const classStr = btn.className || "";
+      if (
+        classStr.includes("OWXEXe-INsAgc") ||
+        classStr.includes("Hul05c") ||
+        classStr.includes("N277ud") ||
+        classStr.includes("I7AGfc") ||
+        classStr.includes("is-active") ||
+        classStr.includes("active")
       ) {
         return true;
+      }
+
+      // If aria-label explicitly says "turn on", then captions are definitely OFF
+      if (
+        ariaLabel.includes("turn on") ||
+        tooltip.includes("turn on") ||
+        ariaLabel.includes("activar") ||
+        tooltip.includes("activar") ||
+        ariaLabel.includes("activer") ||
+        tooltip.includes("activer")
+      ) {
+        return false;
       }
     }
 
@@ -233,7 +364,21 @@
       btn.click();
       return true;
     }
-    return false;
+    // Universal Google Meet keyboard shortcut fallback ('c')
+    try {
+      const event = new KeyboardEvent("keydown", {
+        key: "c",
+        code: "KeyC",
+        keyCode: 67,
+        which: 67,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(event);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   /**
@@ -297,6 +442,8 @@
 
     if (!cleanText || cleanText.length < 2) return;
     if (isSystemAnnouncement(cleanText)) return;
+
+    lastCaptionDetectedTime = Date.now();
 
     // If speaker changed and we had an active utterance from previous speaker, finalize it
     if (currentTurn.speaker && currentTurn.speaker !== cleanSpeaker && currentTurn.text) {

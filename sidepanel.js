@@ -87,6 +87,7 @@
   let transcript = []; // Array of { id, speaker, text, timestamp }
   let turnsSinceLastGen = 0;
   let isGenerating = false;
+  let lastCaptionReceivedTime = 0;
 
   // Toast notification
   function showToast(message) {
@@ -369,6 +370,7 @@
   function handleCaptionTurn(turn) {
     if (!turn || !turn.text) return;
 
+    lastCaptionReceivedTime = Date.now();
     // We are actively receiving captions from Meet! Ensure status reflects connected
     updateMeetStatus({ hasTab: true, inCall: true, captionsEnabled: true });
 
@@ -535,6 +537,11 @@
     // Safety: If URL contains an active meeting code and not in pre-join, user is inside call
     if (data.url && isLiveMeetingCallUrl(data.url) && !data.inPreJoin) {
       data.inCall = true;
+    }
+
+    // If captions were received recently, they are definitely enabled
+    if (lastCaptionReceivedTime && Date.now() - lastCaptionReceivedTime < 30000) {
+      data.captionsEnabled = true;
     }
 
     // State 1: No meeting tab open in browser
